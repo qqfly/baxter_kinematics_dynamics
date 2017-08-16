@@ -1,9 +1,9 @@
 # baxter_kinematics_dynamics
 
-This is a kinematics and dynamics library for Rethink Baxter, using orocos KDL. And this package is only validated on Ubuntu 14.04 STL + ROS indigo + Baxter SDK 1.2.0
+This is a kinematics and dynamics library for Rethink Baxter, using orocos KDL. And this package is only tested on Ubuntu 14.04 STL + ROS indigo + Baxter SDK 1.2.0
 
 ## baxter_kdl
-This package contains main functions of this package, including:
+This package contains main functions of this library, including:
 
 * forward kinematics
 * inverse kinematics 
@@ -29,7 +29,7 @@ sudo apt-get install ros-indigo-orocos-*
 
 * Baxter SDK 1.2.0
 
-This package is only test on Baxter SDK 1.2.0, so you should set up a workstation with Baxter SDK 1.2.0, please refer to [Baxter Workstation Setup](http://sdk.rethinkrobotics.com/wiki/Workstation_Setup) for more information.
+This package is only tested on Baxter SDK 1.2.0, so you should set up a workstation with Baxter SDK 1.2.0, please refer to [Baxter Workstation Setup](http://sdk.rethinkrobotics.com/wiki/Workstation_Setup) for more information.
 
 # Install
 
@@ -52,7 +52,8 @@ The demo code can be found in baxter_kdl_test package. This library onle works f
 
 # Author
 
-Qiang Qiu, Shanghai Jiao Tong University
+Qiang Qiu
+
+Shanghai Jiao Tong University
+
 Wechat Official Account: Nao (ID: qRobotics)
-
-
