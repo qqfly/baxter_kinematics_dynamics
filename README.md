@@ -16,7 +16,7 @@ This package contains main functions of this library, including:
     * scalable threshold
 
 ## baxter_kdl_test
-A example package of using baxter_kdl
+An example package of using baxter_kdl
 
 # Prerequisite
 
