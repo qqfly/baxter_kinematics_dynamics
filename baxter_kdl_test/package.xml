@@ -1,0 +1,22 @@
+<?xml version="1.0"?>
+<package>
+  <name>baxter_kdl_test</name>
+  <version>1.0.1</version>
+  <description>The baxter_kdl_test package</description>
+
+  <maintainer email="qrobotics@yeah.net">Qiang Qiu</maintainer>
+
+  <license>BSD</license>
+
+  <buildtool_depend>catkin</buildtool_depend>
+  <build_depend>roscpp</build_depend>
+  <build_depend>std_msgs</build_depend>
+  <build_depend>baxter_kdl</build_depend>
+  <run_depend>roscpp</run_depend>
+  <run_depend>std_msgs</run_depend>
+  <run_depend>baxter_kdl</run_depend>
+
+  <export>
+
+  </export>
+</package>
