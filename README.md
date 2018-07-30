@@ -35,7 +35,7 @@ This package is only tested on Baxter SDK 1.2.0, so you should set up a workstat
 
 ```
 1. cd ~/catkin_ws/src
-2. git clone https://github.com/qqfly/baxter_kinematics_dynamics.git
+2. git clone https://github.com/qqfly/baxter_kinematics_dynamics
 3. cd ~/catkin_ws
 4. source ~/[YourBaxterWorkspace]/devel/setup.bash
 5. catkin_make
