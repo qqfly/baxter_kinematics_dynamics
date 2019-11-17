@@ -1,6 +1,6 @@
 <package>
   <name>baxter_kinematics_dynamics</name>
-  <version>1.0.1</version>
+  <version>1.1.1</version>
   <description>
       baxter kinematics and dynamics library with orocos KDL
   </description>
@@ -8,12 +8,11 @@
   <maintainer email="qrobotics@yeah.net">Qiang Qiu</maintainer>
 
   <license>GNU LGPL</license>
-  
+
   <author email="qrobotics@yeah.net">Qiang Qiu</author>
 
   <buildtool_depend>catkin</buildtool_depend>
   <run_depend>baxter_kdl</run_depend>
-  <run_depend>baxter_kdl_test</run_depend>
 
   <export>
     <metapackage/>

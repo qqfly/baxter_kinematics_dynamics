@@ -1,394 +1,414 @@
-// GNU Lesser General Public License
-// 
-// Copyright (c) 2017 Qiang Qiu <qrobotics@yeah.net>
-// 
-// baxter_kdl is a free software, you can redistribute it and/or modify
-// it under the terms of the GNU Lesser General Public License as published by
-// the Free Software Foundation, either version 3 of the License, or
-// at your option) any later version.
-// 
-// This program is distributed in the hope that it will be useful,
-// but WITHOUT ANY WARRANTY; without even the implied warranty of
-// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-// GNU Lesser General Public License for more details.
-// 
-// You should have received a copy of the GNU Lesser General Public License
-// along with this program.  If not, see <http://www.gnu.org/licenses/>.
+#include <baxter_kdl/baxter_kdl.h>
 
-#include <baxter_kdl.h>
+namespace B_KDL
+{
 
-namespace B_KDL {
-
-using namespace std;
 using namespace KDL;
 
-baxter_kdl::baxter_kdl(std::string _limb)
+BaxterDynamics::BaxterDynamics(const std::string &limb_name)
 {
-  limb = _limb;
-  if(limb != "right" && limb != "left")
+  m_limb_name = limb_name;
+  if (m_limb_name != "right" && m_limb_name != "left")
   {
     ROS_ERROR("Recieve a wrong limb name");
-    //break();
+    // throw exception
   }
 
-  is_joint_state_ready = 1;
-  spring_effort = -30;
-  double default_threshold_[] = {10.0, 10.0, 5.0, 4.5, 2.0, 2.0, 1.0};  // collision threshold
-  is_collision = false;
+  m_spring_effort = -30;
+  double m_default_threshold_[] = {10.0, 10.0, 5.0, 4.5, 2.0, 2.0, 1.0}; // collision threshold
+  m_is_collision = false;
 
   ros::NodeHandle node;
   ros::Rate loop_rate(10);
 
-  //Create a subscribers
-  joint_states_sub = node.subscribe("/robot/joint_states", 100, &baxter_kdl::joint_state_callback, this);
-  std::string arm_states_topic_name = "/robot/limb/" + limb +"/gravity_compensation_torques";
-  arm_states_sub = node.subscribe(arm_states_topic_name.c_str(), 100, &baxter_kdl::arm_state_callback, this);
+  // Create a subscribers
+  m_joint_states_sub = node.subscribe("/robot/joint_states", 100, &BaxterDynamics::_JointStateCallback, this);
+  std::string arm_states_topic_name = "/robot/limb/" + m_limb_name + "/gravity_compensation_torques";
+  m_arm_states_sub = node.subscribe(arm_states_topic_name.c_str(), 100, &BaxterDynamics::_ArmStateCallback, this);
 
-  //Read the URDF from param sever  
+  // Read the URDF from param sever
+  KDL::Tree kdl_tree;
   if (!kdl_parser::treeFromParam("robot_description", kdl_tree))
   {
     ROS_ERROR("Failed to construct kdl tree");
-  }  
+  }
 
-  //Get chain from kdl tree
+  // Get chain from kdl tree
   std::string base_link = "base";
-  std::string tip_link = limb + "_gripper";  		// _gripper frame
-  kdl_tree.getChain(base_link, tip_link, arm_chain);
+  std::string tip_link = m_limb_name + "_gripper"; // _gripper frame
+  kdl_tree.getChain(base_link, tip_link, m_arm_chain);
   //Get number of Joints
-  num_jnts = arm_chain.getNrOfJoints();
+  m_num_jnts = m_arm_chain.getNrOfJoints();
 
   // Some initializations
-  new_time = ros::Time::now();
-  q_current.resize(num_jnts);
-  q_dot_current.resize(num_jnts);
-  q_ddot_current.resize(num_jnts);
-  q_effort_current.resize(num_jnts);
-  external_torque.resize(num_jnts);
-  default_threshold.resize(num_jnts);
-  threshold.resize(num_jnts);
+  m_new_time = ros::Time::now();
+  m_q_current.resize(m_num_jnts);
+  m_q_dot_current.resize(m_num_jnts);
+  m_q_ddot_current.resize(m_num_jnts);
+  m_q_effort_current.resize(m_num_jnts);
+  m_external_torque.resize(m_num_jnts);
+  m_default_threshold.resize(m_num_jnts);
+  m_threshold.resize(m_num_jnts);
 
-  for(int i=0;i<num_jnts;i++)
+  for (size_t i = 0; i < m_num_jnts; i++)
   {
-    default_threshold[i] = default_threshold_[i];
+    m_default_threshold[i] = m_default_threshold_[i];
   }
-  threshold = default_threshold;
+  m_threshold = m_default_threshold;
 
-  last_q_current.resize(num_jnts);
-  last_q_dot_current.resize(num_jnts);
-  
-  is_joint_state_ready = 0;
+  m_last_q_current.resize(m_num_jnts);
+  m_last_q_dot_current.resize(m_num_jnts);
+
+  m_is_joint_state_ready = false;
   // Wait for first message from joint_state subscriber arrives
-  while(ros::ok() && !is_joint_state_ready)
+  while (ros::ok() && !m_is_joint_state_ready)
   {
     ros::spinOnce();
   }
 }
 
-void baxter_kdl::joint_state_callback(const sensor_msgs::JointState::ConstPtr& msg)
+bool BaxterDynamics::SetCollisionThreshold(const std::vector<double> &threshold)
+{
+  if (threshold.size() != m_num_jnts)
+  {
+    ROS_ERROR("Invalid input");
+    return false;
+  }
+  for (size_t i = 0; i < m_num_jnts; ++i)
+  {
+    if (threshold[i] < 0)
+    {
+      ROS_ERROR("Invalid input");
+      return false;
+    }
+  }
+  m_threshold = threshold;
+  return true;
+}
+
+bool BaxterDynamics::SetDefaultCollisionThreshold()
+{
+  return SetCollisionThreshold(m_default_threshold);
+}
+
+bool BaxterDynamics::ForwardKinematics(const std::vector<double> &joint_values, std::vector<double> &posture)
+{
+  if (joint_values.size() != m_num_jnts)
+  {
+    ROS_ERROR("Input joint_values has a wrong size");
+    return false;
+  }
+  posture.resize(7); //  x y z ox oy oz ow
+
+  //Create Joint Array for calculation
+  KDL::JntArray joint_positions = JntArray(m_num_jnts);
+
+  for (size_t i = 0; i < m_num_jnts; i++)
+  {
+    joint_positions(i) = joint_values[i];
+  }
+
+  //Create the frame that will contain the results
+  KDL::Frame end_frame;
+
+  ChainFkSolverPos_recursive fksolver(m_arm_chain);
+
+  if (fksolver.JntToCart(joint_positions, end_frame) != 0)
+  {
+    ROS_ERROR("Cannot compute forward kinematics");
+    return false;
+  }
+  KDL::Vector position;
+  KDL::Rotation rotation = Rotation(end_frame.M);
+  position = end_frame.p;
+  double ox, oy, oz, ow;
+  rotation.GetQuaternion(ox, oy, oz, ow);
+
+  posture[0] = position(0);
+  posture[1] = position(1);
+  posture[2] = position(2);
+  posture[3] = ox;
+  posture[4] = oy;
+  posture[5] = oz;
+  posture[6] = ow;
+
+  return true;
+}
+
+bool BaxterDynamics::ForwardKinematics(std::vector<double> &posture)
+{
+  return ForwardKinematics(m_q_current, posture);
+}
+
+bool BaxterDynamics::InverseKinematics(const std::vector<double> &position, std::vector<double> &joint_values)
+{
+  std::vector<double> orientation;
+  orientation.clear(); // zero size orientation
+  return InverseKinematics(position, orientation, joint_values);
+}
+
+bool BaxterDynamics::InverseKinematics(const std::vector<double> &position, const std::vector<double> &orientation, std::vector<double> &joint_values)
+{
+  return InverseKinematics(position, orientation, m_q_current, joint_values);
+}
+
+bool BaxterDynamics::InverseKinematics(const std::vector<double> &position, const std::vector<double> &orientation, const std::vector<double> &seed, std::vector<double> &joint_values)
+{
+  if (position.size() != 3)
+  {
+    ROS_ERROR("Invalid position size");
+    return false;
+  }
+  if (orientation.size() != 4 && orientation.size() != 0)
+  {
+    ROS_ERROR("Invalid orientation size");
+    return false;
+  }
+  if (seed.size() != m_num_jnts)
+  {
+    ROS_ERROR("Invalid seed size");
+    return false;
+  }
+  joint_values.resize(m_num_jnts);
+
+  ChainFkSolverPos_recursive fksolver = ChainFkSolverPos_recursive(m_arm_chain);
+  ChainIkSolverVel_pinv iksolver_v = ChainIkSolverVel_pinv(m_arm_chain);
+  ChainIkSolverPos_NR iksolver_p = ChainIkSolverPos_NR(m_arm_chain, fksolver, iksolver_v);
+  KDL::Vector pos = Vector(position[0], position[1], position[2]);
+  KDL::Rotation rot = Rotation();
+  if (orientation.size() != 0)
+  {
+    rot = rot.Quaternion(orientation[0], orientation[1], orientation[2], orientation[3]);
+  }
+
+  KDL::JntArray seed_array = JntArray(m_num_jnts);
+
+  for (size_t i = 0; i < m_num_jnts; i++)
+  {
+    seed_array(i) = seed[i];
+  }
+
+  //Make IK Call
+  KDL::Frame goal_pose;
+  if (orientation.size() != 0)
+  {
+    goal_pose = Frame(rot, pos);
+  }
+  else
+  {
+    goal_pose = Frame(pos);
+  }
+  KDL::JntArray result_angles = JntArray(m_num_jnts);
+
+  if (iksolver_p.CartToJnt(seed_array, goal_pose, result_angles) != KDL::SolverI::E_NOERROR)
+  {
+    ROS_ERROR("Cannot compute inverse kinematics");
+    return false;
+  }
+
+  for (size_t i = 0; i < m_num_jnts; i++)
+  {
+    joint_values[i] = result_angles(i);
+  }
+  return true;
+}
+
+bool BaxterDynamics::GravityEffort(std::vector<double> &effort)
+{
+  // current gravity effort
+  return GravityEffort(m_q_current, effort);
+}
+
+bool BaxterDynamics::GravityEffort(const std::vector<double> &joint_values, std::vector<double> &effort)
+{
+  if (joint_values.size() != m_num_jnts)
+  {
+    return false;
+  }
+  effort.resize(m_num_jnts);
+
+  KDL::ChainDynParam dyn = KDL::ChainDynParam(m_arm_chain, KDL::Vector(0, 0, -9.81));
+  //Create Joint Array for calculation
+  KDL::JntArray joint_positions = JntArray(m_num_jnts);
+
+  for (size_t i = 0; i < m_num_jnts; i++)
+  {
+    joint_positions(i) = joint_values[i];
+  }
+
+  KDL::JntArray gravity = JntArray(m_num_jnts); // gravity array
+  if (dyn.JntToGravity(joint_positions, gravity) != KDL::SolverI::E_NOERROR)
+  {
+    ROS_ERROR("Cannot compute gravity torque");
+    return false;
+  }
+
+  // Modifying the output array
+  for (size_t i = 0; i < m_num_jnts; i++)
+  {
+    effort[i] = gravity(i);
+  }
+  effort[1] -= m_spring_effort; // subtract spring effort from s1 joint
+  return true;
+}
+
+bool BaxterDynamics::InverseDynamics(std::vector<double> &effort)
+{
+  //TODO: calculate m_q_ddot_current
+  for (size_t i = 0; i < m_num_jnts; i++)
+  {
+    m_q_ddot_current[i] = 0; // (last_q_dot - q_dot)/dt is too bad.
+  }
+
+  return InverseDynamics(m_q_current, m_q_dot_current, m_q_ddot_current, effort);
+}
+
+bool BaxterDynamics::InverseDynamics(const std::vector<double> &joint_values, const std::vector<double> &joint_velocities, const std::vector<double> &joint_accelerations, std::vector<double> &effort)
+{
+  if (joint_values.size() != m_num_jnts)
+  {
+    ROS_ERROR("Invalid joint_values size");
+    return false;
+  }
+  if (joint_velocities.size() != m_num_jnts)
+  {
+    ROS_ERROR("Invalid joint_velocities size");
+    return false;
+  }
+  if (joint_accelerations.size() != m_num_jnts)
+  {
+    ROS_ERROR("Invalid joint_accelerations size");
+    return false;
+  }
+
+  effort.resize(m_num_jnts);
+
+  // inverse dynamics solver: recursive newton euler solver
+  KDL::ChainIdSolver_RNE idsolver(m_arm_chain, KDL::Vector(0, 0, -9.81));
+
+  KDL::JntArray q = JntArray(m_num_jnts);
+  KDL::JntArray q_dot = JntArray(m_num_jnts);
+  KDL::JntArray q_dotdot = JntArray(m_num_jnts);
+  std::vector<Wrench> wrenchnull;
+  KDL::JntArray torques = JntArray(m_num_jnts);
+
+  for (size_t i = 0; i < m_arm_chain.getNrOfSegments(); i++)
+  {
+    wrenchnull.push_back(KDL::Wrench());
+  }
+
+  for (size_t i = 0; i < m_num_jnts; i++)
+  {
+    q(i) = joint_values[i];
+    q_dot(i) = joint_velocities[i];
+    q_dotdot(i) = joint_accelerations[i];
+  }
+
+  if (idsolver.CartToJnt(q, q_dot, q_dotdot, wrenchnull, torques) != KDL::SolverI::E_NOERROR)
+  {
+    ROS_ERROR("Cannot compute inverse dynamics");
+    return false;
+  }
+  //Modifying the output array
+  for (size_t i = 0; i < m_num_jnts; i++)
+  {
+    effort[i] = torques(i);
+  }
+  effort[1] -= m_spring_effort; // subtract spring effort from e1 joint
+  return true;
+}
+
+void BaxterDynamics::_JointStateCallback(const sensor_msgs::JointState::ConstPtr &msg)
 {
   //setting joints in the right order to feed the jacobian
-	//JointState order -> e0, e1, s0, s1, w0, w1, w2
-	//desired order -> s0, s1, e0, e1, w0, w1, w2
+  //JointState order -> e0, e1, s0, s1, w0, w1, w2
+  //desired order -> s0, s1, e0, e1, w0, w1, w2
 
-  if(msg->name.size() == 1)
+  if (msg->name.size() == 1)
   {
     // filter out gripper joint_states
     return;
   }
 
-  old_time = new_time;
-  new_time = msg->header.stamp;
-  time_step = new_time-old_time;
-  for(int i=0; i<num_jnts;i++)
+  m_old_time = m_new_time;
+  m_new_time = msg->header.stamp;
+  m_time_step = m_new_time - m_old_time;
+  for (size_t i = 0; i < m_num_jnts; i++)
   {
-    last_q_current[i] = q_current[i];
-    last_q_dot_current[i] = q_dot_current[i];
+    m_last_q_current[i] = m_q_current[i];
+    m_last_q_dot_current[i] = m_q_dot_current[i];
   }
 
   int t = 0;
-  if (limb=="right")
+  if (m_limb_name == "right")
   {
     t = 7;
   }
-	for(int i = 0; i < 2 ; i++)
+  for (size_t i = 0; i < 2; i++)
   {
-		// s0 and s1
-    q_current[i] = (double)(msg->position[i + 4 + t]);
-    q_dot_current[i] = (double)(msg->velocity[i + 4 + t]);
-    q_effort_current[i] = (double)(msg->effort[i + 4 + t]);
-	}
+    // s0 and s1
+    m_q_current[i] = (double)(msg->position[i + 4 + t]);
+    m_q_dot_current[i] = (double)(msg->velocity[i + 4 + t]);
+    m_q_effort_current[i] = (double)(msg->effort[i + 4 + t]);
+  }
 
-	for(int i = 2; i < 4 ; i++)
-  { 
-		// e0 and e1
-    q_current[i] = (double)(msg->position[i + t]);
-    q_dot_current[i] = (double)(msg->velocity[i + t]);
-    q_effort_current[i] = (double)(msg->effort[i + t]);
-	}
+  for (size_t i = 2; i < 4; i++)
+  {
+    // e0 and e1
+    m_q_current[i] = (double)(msg->position[i + t]);
+    m_q_dot_current[i] = (double)(msg->velocity[i + t]);
+    m_q_effort_current[i] = (double)(msg->effort[i + t]);
+  }
 
-	for(int i = 4; i < 7 ; i++)
-  { 
-		// w0, w1, w2
-    q_current[i] = (double)(msg->position[i + 2 + t]);
-    q_dot_current[i] = (double)(msg->velocity[i + 2 + t]);
-    q_effort_current[i] = (double)(msg->effort[i + 2 + t]);
-	}
+  for (size_t i = 4; i < 7; i++)
+  {
+    // w0, w1, w2
+    m_q_current[i] = (double)(msg->position[i + 2 + t]);
+    m_q_dot_current[i] = (double)(msg->velocity[i + 2 + t]);
+    m_q_effort_current[i] = (double)(msg->effort[i + 2 + t]);
+  }
 
   // TODO: compute joint accelerations with Kalman Filter.
-  for(int i=0; i<num_jnts;i++)
+  for (size_t i = 0; i < m_num_jnts; i++)
   {
     // dirty accelerations
-    q_ddot_current[i] = (q_dot_current[i] - last_q_dot_current[i]) / time_step.toSec();
+    m_q_ddot_current[i] = (m_q_dot_current[i] - m_last_q_dot_current[i]) / m_time_step.toSec();
   }
 
-  is_joint_state_ready = 1;
-  compute_external_torque();  // update external torque
-  collision_state();          // update collision state
+  m_is_joint_state_ready = true;
+  _ComputeExternalTorque(); // update external torque
+  _UpdateCollisionState();  // update collision state
 }
 
-void baxter_kdl::arm_state_callback(const baxter_core_msgs::SEAJointState::ConstPtr& msg)
+void BaxterDynamics::_ArmStateCallback(const baxter_core_msgs::SEAJointState::ConstPtr &msg)
 {
   // this arm_state is slower than joint_states, but it can supply the hysteresis_model_effort and crosstalk_model_effort: (spring effort for s1 joint)
-  spring_effort = msg->hysteresis_model_effort[1] - msg->crosstalk_model_effort[1];
+  m_spring_effort = msg->hysteresis_model_effort[1] - msg->crosstalk_model_effort[1];
 }
 
-bool baxter_kdl::forward_kinematics(vector<double> &result)
+void BaxterDynamics::_ComputeExternalTorque()
 {
-  return forward_kinematics(result, q_current);
-}
-
-bool baxter_kdl::forward_kinematics(vector<double> &result, vector<double> joint_values)
-{
-  result.resize(7); //  x y z ox oy oz ow
-  if(joint_values.size()!=num_jnts)
-  {
-    return false;
-  }
-  //Create KDL Solver
-  ChainFkSolverPos_recursive fksolver = ChainFkSolverPos_recursive(arm_chain);
-  //Create Joint Array for calculation
-  KDL::JntArray	joint_positions = JntArray(num_jnts);
-
-  for(int i = 0; i<num_jnts; i++)
-  {
-    joint_positions(i)=joint_values[i];
-  }
-
-  //Create the frame that will contain the results
-  KDL::Frame end_frame;
-  bool fk_status;
-  fk_status = fksolver.JntToCart(joint_positions,end_frame);
-  KDL::Vector pos;
-  KDL::Rotation rotation = Rotation(end_frame.M);
-  pos = end_frame.p;
-  double rot[3];
-  rotation.GetQuaternion(rot[0],rot[1],rot[2],rot[3]);
-
-  //Modifying the output array
-  for(int i=0; i<3; i++)
-  {
-    result[i]=pos(i);
-  }
-  for(int i=0; i<4; i++)
-  {
-    result[i+3]=rot[i];
-  }
-  return true;
-}
-
-bool baxter_kdl::inverse_kinematics(vector<double> &result, vector<double> position)
-{
-  result.resize(num_jnts);
-  if(position.size() != 3)
-  {
-    return false;
-  }
-  vector<double> orientation;
-  orientation.clear();    // zero size orientation
-  return inverse_kinematics(result, position, orientation);
-}
-
-bool baxter_kdl::inverse_kinematics(vector<double> &result, vector<double> position, vector<double> orientation)
-{
-  result.resize(num_jnts);
-  if(orientation.size() != 4 &&  orientation.size() !=0)
-  {
-    return false;
-  }
-  vector<double> seed;
-  seed.resize(num_jnts);
-  // Populate seed with current angles
-  for(int i=0; i<num_jnts; i++)
-  {
-      seed[i]=q_current[i];
-  }
-  return inverse_kinematics(result, position, orientation, seed);
-}
-
-bool baxter_kdl::inverse_kinematics(vector<double> &result, vector<double> position, vector<double> orientation, vector<double> seed)
-{
-  result.resize(num_jnts);
-  if(seed.size() != num_jnts)
-  {
-    return false;
-  }
-  ChainFkSolverPos_recursive fksolver = ChainFkSolverPos_recursive(arm_chain);
-  ChainIkSolverVel_pinv iksolver_v = 	ChainIkSolverVel_pinv(arm_chain);
-  ChainIkSolverPos_NR iksolver_p = ChainIkSolverPos_NR(arm_chain,fksolver,iksolver_v);
-  KDL::Vector pos = Vector(position[0],position[1],position[2]);
-  KDL::Rotation rot = Rotation();
-  if (orientation.size() != 0){
-    rot = rot.Quaternion(orientation[0],orientation[1],orientation[2],orientation[3]);
-  }
-  
-  KDL::JntArray seed_array = JntArray(num_jnts);
-
-  for(int i=0; i<num_jnts; i++)
-  {
-    seed_array(i)=seed[i];
-  }
-  
-  //Make IK Call
-  KDL::Frame goal_pose;
-  if (orientation.size() != 0)
-  {
-    goal_pose = Frame(rot,pos);
-  }
-  else{
-    goal_pose = Frame(pos);
-  }
-  KDL::JntArray result_angles = JntArray(num_jnts);
-  bool ik_status;
-  ik_status = iksolver_p.CartToJnt(seed_array, goal_pose, result_angles);  
-
-  for(int i=0; i<7; i++)
-  {
-    result[i]=result_angles(i);
-  }
-  return true;
-}
-
-bool baxter_kdl::gravity_effort(vector<double> &result)
-{
-  // current gravity effort
-  return gravity_effort(result, q_current);
-}
-
-bool baxter_kdl::gravity_effort(vector<double> &result, vector<double> joint_values)
-{
-  result.resize(num_jnts);
-  if(joint_values.size() != num_jnts)
-  {
-    return false;
-  }
-
-  KDL::ChainDynParam dyn = KDL::ChainDynParam(arm_chain, KDL::Vector(0,0,-9.81));
-  //Create Joint Array for calculation
-  KDL::JntArray	joint_positions = JntArray(num_jnts);
-  int i;
-
-  for(i = 0; i<num_jnts; i++)
-  {
-    joint_positions(i)=joint_values[i];
-  }
- 
-  KDL::JntArray	gravity = JntArray(num_jnts);		  // gravity array
-  dyn.JntToGravity(joint_positions,gravity);
-
-  // Modifying the output array 
-  for(i=0; i<7; i++)
-  {
-    result[i]=gravity(i);
-  }
-  result[1] -= spring_effort;   // subtract spring effort from s1 joint
-  return true;
-}
-
-bool baxter_kdl::inverse_dynamics(vector<double> &result)
-{
-  //TODO: calculate q_ddot_current
-  for(int i=0;i<num_jnts;i++)
-  {
-    q_ddot_current[i] = 0;  // difference result is too bad.
-  }
-
-  return inverse_dynamics(result, q_current, q_dot_current, q_ddot_current);
-}
-
-bool baxter_kdl::inverse_dynamics(vector<double> &result, vector<double> joint_values, vector<double> joint_velocities, vector<double> joint_accelerations)
-{
-  result.resize(num_jnts);
-  if(joint_values.size() != num_jnts)
-  {
-    return false;
-  }
-
-  // inverse dynamics solver: recursive newton euler solver
-  KDL::ChainIdSolver_RNE idsolver = KDL::ChainIdSolver_RNE(arm_chain,KDL::Vector(0,0,-9.81));
-
-  KDL::JntArray q = JntArray(num_jnts);
-  KDL::JntArray q_dot = JntArray(num_jnts);
-  KDL::JntArray q_dotdot = JntArray(num_jnts);
-  std::vector<Wrench> wrenchnull;
-  KDL::JntArray torques = JntArray(num_jnts);
-  
-  unsigned int ns = arm_chain.getNrOfSegments();
-  for(int i=0;i<ns;i++)
-  {
-    wrenchnull.push_back(KDL::Wrench());
-  }
-
-  for(int i=0; i<num_jnts; i++)
-  {
-    q(i)=joint_values[i];
-    q_dot(i)=joint_velocities[i];
-    q_dotdot(i)=joint_accelerations[i];
-  }
-  
-  int a = idsolver.CartToJnt(q, q_dot, q_dotdot, wrenchnull, torques);
-  //Modifying the output array 
-  for(int i=0; i<7; i++)
-  {
-    result[i]=torques(i);
-  }
-  result[1] -= spring_effort;   // subtract spring effort from e1 joint
-  return true;
-}
-
-void baxter_kdl::compute_external_torque()
-{
-  vector<double> id_result;     // computed torque from inverse dynamics
+  std::vector<double> id_result; // computed torque from inverse dynamics
   id_result.clear();
-  
-  inverse_dynamics(id_result);
-  for(int i=0;i<num_jnts;i++)
+
+  InverseDynamics(id_result);
+  for (size_t i = 0; i < m_num_jnts; i++)
   {
-    external_torque[i] = q_effort_current[i] - id_result[i];
+    m_external_torque[i] = m_q_effort_current[i] - id_result[i];
   }
 }
 
-void baxter_kdl::set_collision_threshold(vector<double> threshold_)
+bool BaxterDynamics::_UpdateCollisionState()
 {
-  threshold = threshold_;
-}
-
-void baxter_kdl::set_default_collision_threshold()
-{
-  threshold = default_threshold;
-}
-
-bool baxter_kdl::collision_state()
-{
-  is_collision = false;
-  for(int i=0;i<num_jnts;i++)
+  m_is_collision = false;
+  for (size_t i = 0; i < m_num_jnts; i++)
   {
-    if(fabs(external_torque[i])>threshold[i])
+    if (std::abs(m_external_torque[i]) > m_threshold[i])
     {
-      is_collision = true;
+      m_is_collision = true;
     }
   }
-  return is_collision;
+  return m_is_collision;
 }
 
-}
-
+} // namespace B_KDL

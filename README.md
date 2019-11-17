@@ -2,7 +2,7 @@
 
 This is a kinematics and dynamics library for Rethink Baxter, using orocos KDL. And this package is only tested on Ubuntu 14.04 STL + ROS indigo + Baxter SDK 1.2.0
 
-## baxter_kdl
+## BaxterDynamics
 This package contains main functions of this library, including:
 
 * forward kinematics
@@ -15,8 +15,8 @@ This package contains main functions of this library, including:
 * physical collision checking
     * scalable threshold
 
-## baxter_kdl_test
-An example package of using baxter_kdl
+## BaxterDynamics_test
+An example package of using BaxterDynamics
 
 # Prerequisite
 
@@ -43,17 +43,21 @@ This package is only tested on Baxter SDK 1.2.0, so you should set up a workstat
 
 # How to use
 
-The demo code can be found in baxter_kdl_test package. This library onle works for real robot.
+The demo code can be found in BaxterDynamics_test package. This library onle works for real robot.
 
 <div  align="center">
     <img src="/baxter_kinematics_dynamics/pic/test_output.png" width = "600" height = "300" alt="output" />
 </div>
 <br>
 
+You can find a use case in the following video:
+
+[![IMAGE ALT TEXT HERE](https://img.youtube.com/vi/TCGfhzfvSVM/0.jpg)](https://www.youtube.com/watch?v=TCGfhzfvSVM)
+
 # Author
 
 Qiang Qiu
 
-Shanghai Jiao Tong University
+RVBUST INC.
 
 Wechat Official Account: Nao (ID: qRobotics)
