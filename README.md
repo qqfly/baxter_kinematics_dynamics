@@ -43,7 +43,7 @@ This package is only tested on Baxter SDK 1.2.0, so you should set up a workstat
 
 # How to use
 
-The demo code can be found in BaxterDynamics_test package. This library onle works for real robot.
+The demo code can be found in baxter_kdl_example.cpp. This library onle works for real robot.
 
 <div  align="center">
     <img src="/baxter_kinematics_dynamics/pic/test_output.png" width = "600" height = "300" alt="output" />
